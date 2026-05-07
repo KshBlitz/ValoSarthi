@@ -1,11 +1,11 @@
 """
-Valorant Lineup Assistant — Game Tool (main.py)
-================================================
+ValoSarthi — Game Tool (main.py)  [Sprint 2]
+=============================================
 Hotkeys:
   F5  — T1: Map + Agent setup window
-  F6  — T2: Spike site → Agent position → fire lineup
+  F6  — T2: Spike site selection → OCR auto-detects position → fire lineup
   F7  — Repeat / show same lineup again
-  4–9 — Selection keys (only active during F6 overlay steps)
+  4–9 — Selection keys (only active during F6 Step 1 overlay)
 """
 
 import sys
@@ -33,9 +33,9 @@ except ImportError:
     KEYBOARD_OK = False
     print("WARNING: 'keyboard' package not found — hotkeys disabled.\nRun: pip install keyboard")
 
-from engine.state   import AppState, MAPS, AGENTS, SITE_KEYS, POSITION_KEYS, \
-                           get_position_label, get_position_folder, THROW_DISPLAY
-from engine.matcher import match_lineup
+from engine.state      import AppState, MAPS, AGENTS, SITE_KEYS, THROW_DISPLAY
+from engine.matcher    import match_lineup
+from engine.ocr_engine import detect_player_position
 
 # ── Palette ───────────────────────────────────────────────────
 C = {
@@ -142,7 +142,7 @@ class SetupWindow(QWidget):
         row.addWidget(cancel); row.addWidget(confirm)
         lay.addLayout(row)
 
-        hint = QLabel("F5 Setup  |  F6 Spike/Position  |  F7 Repeat")
+        hint = QLabel("F5 Setup  |  F6 Spike Site (auto-detects position)  |  F7 Repeat")
         hint.setStyleSheet(f"color:{C['sub']};font-size:10px;")
         hint.setAlignment(Qt.AlignCenter)
         lay.addWidget(hint)
@@ -169,10 +169,10 @@ class SetupWindow(QWidget):
 # ══════════════════════════════════════════════════════════════
 class InputOverlay(QMainWindow):
     """
-    Two-step key-driven selection overlay.
+    Sprint 2: Single-step key-driven selection overlay.
     Step 1: spike site (keys 9,8,7,6,5,4)
-    Step 2: agent position (keys 9,8)
-    After step 2: emits done(spike_site, agent_position_folder)
+    After spike key press: OCR fires automatically to detect position,
+    then emits done(spike_site, agent_position_folder). Step 2 removed.
     """
 
     def __init__(self, state: AppState, on_done):
@@ -296,15 +296,13 @@ class InputOverlay(QMainWindow):
 
     # ── Key handler ────────────────────────────────────────────
     def handle_key(self, k: str):
+        # Sprint 2: Step 1 only — OCR replaces the manual Step 2
         if self.step == 1:
             if k in SITE_KEYS:
                 self._spike = SITE_KEYS[k]
-                self.show_step2(self._spike)
-        elif self.step == 2:
-            if k in ("9", "8"):
-                pos_folder = get_position_folder(self._spike, k)
-                self.hide()
-                self.on_done(self._spike, pos_folder)
+                self.hide()                                    # close overlay immediately
+                pos_folder = detect_player_position()          # OCR: capture → normalise
+                self.on_done(self._spike, pos_folder)          # fire lineup
 
     # ── Positioning ────────────────────────────────────────────
     def _position_window(self):

@@ -17,7 +17,7 @@ try:
         QApplication, QMainWindow, QWidget, QLabel, QComboBox,
         QPushButton, QVBoxLayout, QHBoxLayout, QGridLayout,
         QFrame, QFileDialog, QScrollArea, QMessageBox,
-        QStackedWidget, QSizePolicy, QSpacerItem,
+        QStackedWidget, QSizePolicy, QSpacerItem, QLineEdit,
     )
     from PyQt5.QtCore import Qt, QSize
     from PyQt5.QtGui  import QPixmap, QMovie, QFont, QIcon
@@ -28,9 +28,9 @@ except ImportError:
 from engine.state import (
     MAPS, AGENTS, SPIKE_SITES, THROW_TYPES,
     site_to_folder, folder_to_site,
-    get_position_label, get_position_folder,
     LINEUPS_DIR,
 )
+from engine.ocr_engine import normalise as ocr_normalise
 
 # ── Palette ───────────────────────────────────────────────────
 C = {
@@ -137,6 +137,9 @@ class AddPanel(QWidget):
         QComboBox QAbstractItemView {{ background:{C['surface']};
                         selection-background-color:{C['red']};
                         border:1px solid {C['border']}; color:{C['text']}; }}
+        QLineEdit    {{ background:{C['surface']}; border:1px solid {C['border']};
+                        border-radius:6px; padding:7px 10px; color:{C['text']}; }}
+        QLineEdit:focus {{ border-color:{C['red']}; }}
         QPushButton  {{ background:{C['surface']}; color:{C['text']};
                         border:1px solid {C['border']}; border-radius:6px;
                         padding:7px 14px; }}
@@ -179,13 +182,13 @@ class AddPanel(QWidget):
         # Spike site
         grid.addWidget(label("SPIKE SITE", spacing=True), 2, 0)
         self.site_cb = QComboBox(); self.site_cb.addItems(SPIKE_SITES)
-        self.site_cb.currentTextChanged.connect(self._update_pos_options)
         grid.addWidget(self.site_cb, 3, 0)
 
-        # Agent position
+        # Agent position — Sprint 2: free-text QLineEdit (replaces ComboBox)
         grid.addWidget(label("AGENT POSITION", spacing=True), 2, 1)
-        self.pos_cb = QComboBox()
-        grid.addWidget(self.pos_cb, 3, 1)
+        self.pos_input = QLineEdit()
+        self.pos_input.setPlaceholderText("e.g. mid_market, a_elbow, hookah")
+        grid.addWidget(self.pos_input, 3, 1)
 
         # Throw type
         grid.addWidget(label("THROW TYPE", spacing=True), 4, 0)
@@ -193,7 +196,6 @@ class AddPanel(QWidget):
         grid.addWidget(self.throw_cb, 5, 0)
 
         outer.addLayout(grid)
-        self._update_pos_options(self.site_cb.currentText())
 
         outer.addSpacing(20)
         outer.addWidget(sep())
@@ -249,10 +251,59 @@ class AddPanel(QWidget):
         return lbl
 
     def _update_pos_options(self, site: str):
-        self.pos_cb.clear()
-        letter = site[0].upper()
-        self.pos_cb.addItem(f"{letter} Main")
-        self.pos_cb.addItem("Mid")
+        # Sprint 2: kept for backward compatibility — no longer called.
+        # Position is now a free-text QLineEdit.
+        pass
+
+    def _save(self):
+        map_n  = self.map_cb.currentText()
+        agent  = self.agent_cb.currentText()
+        site   = self.site_cb.currentText()
+        throw  = self.throw_cb.currentText().lower()
+
+        # Sprint 2: derive folder from free-text input using OCR normalise logic
+        raw_pos    = self.pos_input.text().strip()
+        pos_folder = ocr_normalise(raw_pos)
+
+        if not pos_folder:
+            QMessageBox.warning(
+                self, "Missing Field",
+                "Please enter a position.\n\nType the position as it appears on the Valorant HUD,\n"
+                "e.g. 'Mid Market', 'A Elbow', 'Hookah'.\n\n"
+                "It will be saved as a normalised folder name (e.g. 'mid_market')."
+            )
+            return
+
+        folder = lineup_folder(map_n, agent, site, pos_folder)
+
+        # Warn if lineup already exists
+        if os.path.isdir(folder):
+            reply = QMessageBox.question(
+                self, "Overwrite?",
+                f"A lineup already exists for:\n{map_n} / {agent} / {site} / {pos_folder}\n\nOverwrite it?",
+                QMessageBox.Yes | QMessageBox.No,
+            )
+            if reply != QMessageBox.Yes:
+                return
+
+        os.makedirs(folder, exist_ok=True)
+
+        # Save meta.json
+        with open(os.path.join(folder, "meta.json"), "w") as f:
+            json.dump({"throw": throw}, f, indent=2)
+
+        # Copy images if provided
+        if self._stand_src:
+            shutil.copy(self._stand_src, os.path.join(folder, "stand.png"))
+        if self._aim_src:
+            shutil.copy(self._aim_src, os.path.join(folder, "aim.gif"))
+
+        QMessageBox.information(
+            self, "Saved",
+            f"Lineup saved:\n{map_n} / {agent} / {site} / {pos_folder}\nThrow: {throw.title()}"
+        )
+        self._reset_form()
+        self.on_saved()
 
     def _pick_stand(self):
         path, _ = QFileDialog.getOpenFileName(self, "Select stand.png", "", "Images (*.png *.jpg *.jpeg)")
@@ -273,54 +324,10 @@ class AddPanel(QWidget):
             self.aim_preview.setPixmap(frame)
             self.aim_preview.setText("")
 
-    def _save(self):
-        map_n  = self.map_cb.currentText()
-        agent  = self.agent_cb.currentText()
-        site   = self.site_cb.currentText()
-        pos_t  = self.pos_cb.currentText()   # e.g. "B Main" or "Mid"
-        throw  = self.throw_cb.currentText().lower()
-
-        # Derive folder name from label
-        if pos_t.lower() == "mid":
-            pos_folder = "mid"
-        else:
-            letter = pos_t[0].lower()         # "b"
-            pos_folder = f"{letter}_main"
-
-        folder = lineup_folder(map_n, agent, site, pos_folder)
-
-        # Warn if lineup already exists
-        if os.path.isdir(folder):
-            reply = QMessageBox.question(
-                self, "Overwrite?",
-                f"A lineup already exists for:\n{map_n} / {agent} / {site} / {pos_t}\n\nOverwrite it?",
-                QMessageBox.Yes | QMessageBox.No,
-            )
-            if reply != QMessageBox.Yes:
-                return
-
-        os.makedirs(folder, exist_ok=True)
-
-        # Save meta.json
-        with open(os.path.join(folder, "meta.json"), "w") as f:
-            json.dump({"throw": throw}, f, indent=2)
-
-        # Copy images if provided
-        if self._stand_src:
-            shutil.copy(self._stand_src, os.path.join(folder, "stand.png"))
-        if self._aim_src:
-            shutil.copy(self._aim_src, os.path.join(folder, "aim.gif"))
-
-        QMessageBox.information(
-            self, "Saved",
-            f"Lineup saved:\n{map_n} / {agent} / {site} / {pos_t}\nThrow: {throw.title()}"
-        )
-        self._reset_form()
-        self.on_saved()
-
     def _reset_form(self):
         self._stand_src = ""
         self._aim_src   = ""
+        self.pos_input.clear()
         self.stand_preview.clear(); self.stand_preview.setText("No file selected")
         self.aim_preview.clear();   self.aim_preview.setText("No file selected")
 
@@ -526,7 +533,7 @@ class ManagerWindow(QMainWindow):
         sb_lay.addWidget(self.btn_view)
         sb_lay.addStretch()
 
-        version = QLabel("MVP v1.0")
+        version = QLabel("Sprint 2")
         version.setAlignment(Qt.AlignCenter)
         version.setStyleSheet(f"color:{C['border']};font-size:10px;padding:10px;")
         sb_lay.addWidget(version)

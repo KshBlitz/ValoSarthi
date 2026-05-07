@@ -21,9 +21,6 @@ Run during matches.
 ```bash
 python main.py
 ```
-Required for proper functioning:
-- Run terminal as Administrator
-- Launch the game in Windowed Fullscreen mode
 
 ### Hotkeys
 
