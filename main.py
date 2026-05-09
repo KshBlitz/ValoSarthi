@@ -399,8 +399,14 @@ class LineupOverlay(QMainWindow):
             self._movie = None
         if lineup.has_aim:
             self._movie = QMovie(lineup.aim_path)
+
+            # FIT GIF INSIDE OVERLAY BOX
+            self._movie.setScaledSize(self.aim_lbl.size())
+
+            self.aim_lbl.setScaledContents(True)
             self.aim_lbl.setMovie(self._movie)
             self.aim_lbl.setText("")
+
             self._movie.start()
         else:
             self.aim_lbl.clear()
